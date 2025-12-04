@@ -6,9 +6,9 @@ addOptional(Para,'eta0',0.59);
 addOptional(Para,'d0',10^(-2));
 addOptional(Para,'Q',0.002);
 addOptional(Para,'P',0.99);
-addOptional(Para,'pmin',0.86);
-addOptional(Para,'pmax',1.0);
-addOptional(Para,'pstep',0.03);
+addOptional(Para,'pmin',0.80);
+addOptional(Para,'pmax',0.96);
+addOptional(Para,'pstep',0.04);
 addOptional(Para,'dig',32);
 addOptional(Para,'nk',[5,2;5,2;5,2;5,2;5,2;5,2;5,2;5,2]);
 addOptional(Para, 'SavePath', '', @(x)ischar(x) || isstring(x));
@@ -50,5 +50,6 @@ end
 
 Plot(list_eta,'list_name',list_name,'Save',SavePath+DEName,'Y_Label','$\eta$','Title','Detective Efficiency vs. $p$','y_range',[min(list_eta(:))-0.05 max(list_eta(:))+0.05])
 Plot(list_d,'list_name',list_name,'Save',SavePath+DCRName,'Y_Label','$d$','Y_Scale','log','Title','Dark Count Rate vs. $p$','y_range',[min(list_d(:))/10 1])
+
 
 end
