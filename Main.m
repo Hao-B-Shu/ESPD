@@ -5,10 +5,10 @@ Para=inputParser;
 addOptional(Para,'eta0',0.59);
 addOptional(Para,'d0',10^(-2));
 addOptional(Para,'Q',0.002);
-addOptional(Para,'P',0.99);
-addOptional(Para,'p1',0.99);
+addOptional(Para,'P',0.97);
+addOptional(Para,'p1',0.98);
 addOptional(Para,'dig',32);
-addOptional(Para,'nk',{[8,2;8,4;8,4;8,4;8,4;8,4;8,4]});
+addOptional(Para,'nk',{[8,1;8,4;8,4;8,4;8,4;8,4;8,4;8,4]});
 addOptional(Para,'nk_name',[]);
 addOptional(Para, 'SavePath', '', @(x)ischar(x) || isstring(x));
 addOptional(Para, 'DEName', '', @(x)ischar(x) || isstring(x));
@@ -48,7 +48,7 @@ for l=1:L
     end
 end
 
-Plot(list_eta,'list_name',nk_name+": DE",'Save',SavePath+DEName,'Y_Label','$\eta$','Title','Detective Efficiency vs Level','y_range',[min(list_eta(:)) 1])
+Plot(list_eta,'list_name',nk_name+": DE",'Save',SavePath+DEName,'Y_Label','$\eta$','Title','Detective Efficiency vs Level','y_range',[min(list_eta(:)) max(list_eta(:))])
 Plot(list_d,'list_name',nk_name+": DCR",'Save',SavePath+DCRName,'Y_Label','$d$','Y_Scale','log','Title','Dark Count Rate vs Level','y_range',[min(list_d(:))/10 1])
 
 end

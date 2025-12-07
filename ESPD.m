@@ -6,8 +6,8 @@ addOptional(Para,'d',10^(-2));
 addOptional(Para,'Q',0.002);
 addOptional(Para,'n',8);
 addOptional(Para,'k',4);
-addOptional(Para,'P',0.99);
-addOptional(Para,'p1',0.99);
+addOptional(Para,'P',0.97);
+addOptional(Para,'p1',0.98);
 addOptional(Para,'dig',32);
 parse(Para,varargin{:});
 
