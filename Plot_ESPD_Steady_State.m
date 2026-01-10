@@ -1,8 +1,6 @@
 function Plot_ESPD_Steady_State(varargin)
-% Plot_ESPD_Steady_State: 动力学区间实体填充分析
-% 优化：parfor 并行加速，迭代次数显示，高分辨率导出
-
-%% 1. 初始化参数解析
+% Plot_ESPD_Steady_State: 采用硬截断(Clamp)逻辑的稳定版本
+%% 1. 参数解析
 Para = inputParser;
 addOptional(Para, 'points_eta', 99);  
 addOptional(Para, 'points_d', 71);
@@ -10,8 +8,8 @@ addOptional(Para, 'max_iter', 15);
 addOptional(Para, 'dig', 32);         
 addOptional(Para, 'eta0_range', [0.01, 0.99]);
 addOptional(Para, 'd0_range', [-9, -2]); 
-addOptional(Para, 'n', 5);
-addOptional(Para, 'k', 2);
+addOptional(Para, 'n', 8);
+addOptional(Para, 'k', 4);
 addOptional(Para, 'Save_path', ""); 
 parse(Para, varargin{:});
 
@@ -20,147 +18,112 @@ max_it = Para.Results.max_iter; dig_val = Para.Results.dig;
 n = Para.Results.n; k = Para.Results.k;
 eta0_range = Para.Results.eta0_range; d0_range = Para.Results.d0_range;
 save_path = Para.Results.Save_path;
+if save_path == "" || save_path == string(""), save_path = pwd; end
 
-if save_path == ""
-    save_path = pwd; 
-end
-
-% 启动并行池 (如果未启动)
 gcp(); 
-
-% 建立网格
 eta_vec = linspace(eta0_range(1), eta0_range(2), n_eta);
 d0_log_vec = linspace(d0_range(1), d0_range(2), n_d);
 [ETA0, D0_LOG] = meshgrid(eta_vec, d0_log_vec);
 D0_ACTUAL = 10.^D0_LOG;
 
-% 预分配存储矩阵 (parfor 需要切片变量)
 Steady_Eta_Max = zeros(n_d, n_eta); Steady_Eta_Min = zeros(n_d, n_eta);
 Steady_D_Max   = zeros(n_d, n_eta); Steady_D_Min   = zeros(n_d, n_eta);
 Iter_Count     = zeros(n_d, n_eta);
 
 %% 2. 并行迭代计算
-fprintf('Start parallel (n_d=%d, n_eta=%d)... \n', n_d, n_eta);
-tic; % 开始计时
-
+fprintf('Start parallel calculation... \n');
+tic; 
 parfor i = 1:n_d
-    % 每一行内部使用局部变量以提高效率
-    local_eta_max = zeros(1, n_eta);
-    local_eta_min = zeros(1, n_eta);
-    local_d_max = zeros(1, n_eta);
-    local_d_min = zeros(1, n_eta);
+    local_eta_max = zeros(1, n_eta); local_eta_min = zeros(1, n_eta);
+    local_d_max = zeros(1, n_eta); local_d_min = zeros(1, n_eta);
     local_iter = zeros(1, n_eta);
-    
     for j = 1:n_eta
-        % 保持高精度计算
-        curr_eta = vpa(ETA0(i,j), dig_val);
-        curr_d   = vpa(D0_ACTUAL(i,j), dig_val);
-        
-        tail_size = 10;
-        eta_tail = vpa(zeros(tail_size, 1));
-        d_tail = vpa(zeros(tail_size, 1));
-        
+        curr_eta = vpa(ETA0(i,j), dig_val); curr_d = vpa(D0_ACTUAL(i,j), dig_val);
+        tail_size = 10; eta_tail = vpa(zeros(tail_size, 1)); d_tail = vpa(zeros(tail_size, 1));
         final_step = max_it;
         for step = 1:max_it
             prev_eta = curr_eta; prev_d = curr_d;
-            % 核心函数调用
             [curr_eta, curr_d] = ESPD('eta', curr_eta, 'd', curr_d, 'n', n, 'k', k, 'dig', dig_val);
-            
             idx = mod(step-1, tail_size) + 1;
             eta_tail(idx) = curr_eta; d_tail(idx) = curr_d;
-            
             min_val_d = min(curr_d, prev_d) + vpa('1e-45');
             if (abs(curr_eta - prev_eta) < vpa('0.01')) && (abs(curr_d - prev_d)/min_val_d < vpa('0.01'))
                 eta_tail(:) = curr_eta; d_tail(:) = curr_d;
-                final_step = step;
-                break;
+                final_step = step; break;
             end
         end
-        local_eta_max(j) = double(max(eta_tail));
-        local_eta_min(j) = double(min(eta_tail));
-        local_d_max(j)   = double(max(d_tail));
-        local_d_min(j)   = double(min(d_tail));
-        local_iter(j)    = final_step;
+        local_eta_max(j) = double(max(eta_tail)); local_eta_min(j) = double(min(eta_tail));
+        local_d_max(j) = double(max(d_tail)); local_d_min(j) = double(min(d_tail));
+        local_iter(j) = final_step;
     end
-    % 将局部结果赋回切片变量
-    Steady_Eta_Max(i,:) = local_eta_max;
-    Steady_Eta_Min(i,:) = local_eta_min;
-    Steady_D_Max(i,:)   = local_d_max;
-    Steady_D_Min(i,:)   = local_d_min;
-    Iter_Count(i,:)     = local_iter;
+    Steady_Eta_Max(i,:) = local_eta_max; Steady_Eta_Min(i,:) = local_eta_min;
+    Steady_D_Max(i,:) = local_d_max; Steady_D_Min(i,:) = local_d_min;
+    Iter_Count(i,:) = local_iter;
 end
-calc_time = toc;
-fprintf('Cost: %.2f s. \n', calc_time);
-
-% 统一打印结果
-fprintf('\n%-10s | %-10s | %-6s | %-22s | %-22s\n', 'eta0', 'd0', 'Iter', 'Steady_Eta_Range', 'Steady_d_Range');
-fprintf('--------------------------------------------------------------------------------------------\n');
-for i = 1:n_d
-    for j = 1:n_eta
-        fprintf('%-10.2f%%| %-10.1e | %-6d | [%.2f%%, %.2f%%] | [%.1e, %.1e]\n', ...
-            double(ETA0(i,j))*100, double(D0_ACTUAL(i,j)), Iter_Count(i,j), ...
-            Steady_Eta_Min(i,j)*100, Steady_Eta_Max(i,j)*100, ...
-            Steady_D_Min(i,j), Steady_D_Max(i,j));
-    end
-end
+fprintf('Cost: %.2f s. \n', toc);
 
 %% 3. 绘图处理
 view_angle = [-35, 30]; 
 xtick_pos = linspace(eta0_range(1), eta0_range(2), 4);
-xtick_lab = arrayfun(@(x) sprintf('%.2f%%', x*100), xtick_pos, 'UniformOutput', false);
+xtick_lab = arrayfun(@(x) sprintf('$%.0f\\%%$', x*100), xtick_pos, 'UniformOutput', false);
+ytick_pos = 10.^linspace(d0_range(1), d0_range(2), 4);
+ytick_lab = arrayfun(@(x) sprintf('$10^{%.0f}$', log10(x)), ytick_pos, 'UniformOutput', false);
 
-% --- 图 1: 效率图 ---
-fig_eta = figure('Color', 'w', 'Name', 'Efficiency Map'); hold on; grid on;
-for i = 1:n_d-1
-    for j = 1:n_eta-1
-        X = [ETA0(i,j) ETA0(i+1,j) ETA0(i+1,j+1) ETA0(i,j+1)];
-        Y = [D0_ACTUAL(i,j) D0_ACTUAL(i+1,j) D0_ACTUAL(i+1,j+1) D0_ACTUAL(i,j+1)];
-        Z_m1 = [Steady_Eta_Min(i,j) Steady_Eta_Min(i+1,j) Steady_Eta_Min(i+1,j+1) Steady_Eta_Min(i,j+1)];
-        Z_m2 = [Steady_Eta_Max(i,j) Steady_Eta_Max(i+1,j) Steady_Eta_Max(i+1,j+1) Steady_Eta_Max(i,j+1)];
-        fill3([X, fliplr(X)], [Y, fliplr(Y)], [Z_m1, fliplr(Z_m2)], [0.3 0.7 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.4);
-    end
-end
-surf(ETA0, D0_ACTUAL, Steady_Eta_Max, 'FaceColor', 'interp', 'FaceAlpha', 0.8, 'EdgeColor', 'none');
-surf(ETA0, D0_ACTUAL, Steady_Eta_Min, 'FaceColor', 'interp', 'FaceAlpha', 0.8, 'EdgeColor', 'none');
-set(gca, 'ZLim', [max(0, min(Steady_Eta_Min(:))-0.01), min(1, max(Steady_Eta_Max(:))+0.01)], 'YScale', 'log', 'FontWeight', 'bold');
-set(gca, 'XTick', xtick_pos, 'XTickLabel', xtick_lab);
-zt = unique(round(get(gca, 'ZTick'), 4));
-set(gca, 'ZTick', zt, 'ZTickLabel', arrayfun(@(x) sprintf('%.2f%%', x*100), zt, 'UniformOutput', false));
-title(sprintf('Steady-state DE Map (n=%d, k=%d)', n, k), 'FontWeight', 'bold', 'FontSize', 12);
-cb1 = colorbar; drawnow;
-set(cb1, 'TickLabels', arrayfun(@(x) sprintf('%.2f%%', x*100), get(cb1, 'Ticks'), 'UniformOutput', false), 'FontWeight', 'bold');
-xlabel('\eta_0', 'FontWeight', 'bold'); ylabel('d_0', 'FontWeight', 'bold'); zlabel('\eta_{\infty}', 'FontWeight', 'bold');
-view(view_angle); colormap jet;
+% --- 图 1: DE图 ---
+fig_eta = figure('Color', 'w'); ax1 = axes(fig_eta); hold(ax1, 'on'); grid(ax1, 'on');
+
+% 效率硬截断并设置范围
+E_Max_Plot = min(Steady_Eta_Max, 1); E_Min_Plot = max(Steady_Eta_Min, 0);
+z_lims_e = [min(E_Min_Plot(:)), max(E_Max_Plot(:))];
+if z_lims_e(1) >= z_lims_e(2), z_lims_e(2) = z_lims_e(1) + 0.05; end
+
+surf(ax1, ETA0, D0_ACTUAL, E_Max_Plot, 'FaceColor', 'interp', 'EdgeColor', 'none');
+surf(ax1, ETA0, D0_ACTUAL, E_Min_Plot, 'FaceColor', 'interp', 'EdgeColor', 'none');
+
+set(ax1, 'YScale', 'log', 'FontWeight', 'bold', 'TickLabelInterpreter', 'latex');
+set(ax1, 'XTick', xtick_pos, 'XTickLabel', xtick_lab, 'YTick', ytick_pos, 'YTickLabel', ytick_lab);
+set(ax1, 'ZLim', z_lims_e); clim(ax1, z_lims_e);
+ztick_pos_e = linspace(z_lims_e(1), z_lims_e(2), 4);
+set(ax1, 'ZTick', ztick_pos_e, 'ZTickLabel', arrayfun(@(x) sprintf('$%.0f\\%%$', x*100), ztick_pos_e, 'UniformOutput', false));
+xlabel(ax1, '$\eta_0$', 'Interpreter', 'latex'); ylabel(ax1, '$d_0$', 'Interpreter', 'latex'); zlabel(ax1, '$\eta_{\infty}$', 'Interpreter', 'latex');
+view(ax1, view_angle); colormap(ax1, jet); cb1 = colorbar(ax1); 
+set(cb1, 'TickLabelInterpreter', 'latex'); drawnow;
+cb1.TickLabels = arrayfun(@(x) sprintf('$%.0f\\%%$', x*100), cb1.Ticks, 'UniformOutput', false);
 
 % --- 图 2: DCR 图 ---
-fig_d = figure('Color', 'w', 'Name', 'DCR Map'); hold on; grid on;
-Z_L_Max = log10(max(Steady_D_Max, 1e-65)); Z_L_Min = log10(max(Steady_D_Min, 1e-65));
-for i = 1:n_d-1
-    for j = 1:n_eta-1
-        X = [ETA0(i,j) ETA0(i+1,j) ETA0(i+1,j+1) ETA0(i,j+1)];
-        Y = [D0_ACTUAL(i,j) D0_ACTUAL(i+1,j) D0_ACTUAL(i+1,j+1) D0_ACTUAL(i,j+1)];
-        Z_v1 = [Z_L_Min(i,j) Z_L_Min(i+1,j) Z_L_Min(i+1,j+1) Z_L_Min(i,j+1)];
-        Z_v2 = [Z_L_Max(i,j) Z_L_Max(i+1,j) Z_L_Max(i+1,j+1) Z_L_Max(i,j+1)];
-        fill3([X, fliplr(X)], [Y, fliplr(Y)], [Z_v1, fliplr(Z_v2)], [0.9 0.4 0.4], 'EdgeColor', 'none', 'FaceAlpha', 0.4);
-    end
-end
-surf(ETA0, D0_ACTUAL, Z_L_Max, 'FaceColor', 'r', 'FaceAlpha', 0.6, 'EdgeColor', 'none');
-surf(ETA0, D0_ACTUAL, Z_L_Min, 'FaceColor', 'b', 'FaceAlpha', 0.6, 'EdgeColor', 'none');
-set(gca, 'YScale', 'log', 'ZLim', [min(Z_L_Min(:))-1, max(Z_L_Max(:))+1], 'FontWeight', 'bold');
-set(gca, 'XTick', xtick_pos, 'XTickLabel', xtick_lab);
-zt_d = unique(round(get(gca, 'ZTick')));
-set(gca, 'ZTick', zt_d, 'ZTickLabel', arrayfun(@(x) sprintf('10^{%.0f}', x), zt_d, 'UniformOutput', false));
-title(sprintf('Steady-state DCR Map (n=%d, k=%d)', n, k), 'FontWeight', 'bold', 'FontSize', 12);
-cb2 = colorbar; drawnow;
-set(cb2, 'TickLabels', arrayfun(@(x) sprintf('10^{%.0f}', x), get(cb2, 'Ticks'), 'UniformOutput', false), 'FontWeight', 'bold');
-xlabel('\eta_0', 'FontWeight', 'bold'); ylabel('d_0', 'FontWeight', 'bold'); zlabel('d_{\infty}', 'FontWeight', 'bold');
-view(view_angle);
+fig_d = figure('Color', 'w'); ax2 = axes(fig_d); hold(ax2, 'on'); grid(ax2, 'on');
 
-%% 4. 保存图片
-name_eta = sprintf('Stable_n%d_k%d_eta.eps', n, k);
-name_d   = sprintf('Stable_n%d_k%d_d.eps', n, k);
-if ~exist(save_path, 'dir') && save_path ~= "", mkdir(save_path); end
-fprintf('Saving figures to: %s\n', save_path);
-exportgraphics(fig_eta, fullfile(save_path, name_eta), 'ContentType', 'vector');
-exportgraphics(fig_d, fullfile(save_path, name_d), 'ContentType', 'vector');
+% 物理截断最小值 10^-20
+D_Max_Clamp = max(Steady_D_Max, 1e-20);
+D_Min_Clamp = max(Steady_D_Min, 1e-20);
+
+% 取对数
+Z_L_Max = log10(D_Max_Clamp);
+Z_L_Min = log10(D_Min_Clamp);
+
+% 设置范围
+z_d_min = -20;
+z_d_max = max(Z_L_Max(:));
+if z_d_max <= z_d_min, z_d_max = z_d_min + 5; end
+z_d_lims = [z_d_min, z_d_max];
+
+surf(ax2, ETA0, D0_ACTUAL, Z_L_Max, 'FaceColor', 'interp', 'EdgeColor', 'none');
+surf(ax2, ETA0, D0_ACTUAL, Z_L_Min, 'FaceColor', 'interp', 'EdgeColor', 'none');
+
+set(ax2, 'YScale', 'log', 'FontWeight', 'bold', 'TickLabelInterpreter', 'latex');
+set(ax2, 'XTick', xtick_pos, 'XTickLabel', xtick_lab, 'YTick', ytick_pos, 'YTickLabel', ytick_lab);
+set(ax2, 'ZLim', z_d_lims); clim(ax2, z_d_lims);
+
+ztick_d_pos = linspace(z_d_lims(1), z_d_lims(2), 4);
+set(ax2, 'ZTick', ztick_d_pos, 'ZTickLabel', arrayfun(@(x) sprintf('$10^{%.0f}$', x), ztick_d_pos, 'UniformOutput', false));
+
+xlabel(ax2, '$\eta_0$', 'Interpreter', 'latex'); ylabel(ax2, '$d_0$', 'Interpreter', 'latex'); zlabel(ax2, '$d_{\infty}$', 'Interpreter', 'latex');
+view(ax2, view_angle); colormap(ax2, jet); cb2 = colorbar(ax2); 
+set(cb2, 'TickLabelInterpreter', 'latex'); drawnow;
+cb2.TickLabels = arrayfun(@(x) sprintf('$10^{%.0f}$', x), cb2.Ticks, 'UniformOutput', false);
+
+%% 4. 导出
+set(fig_eta, 'Renderer', 'Painters'); set(fig_d, 'Renderer', 'Painters');
+exportgraphics(fig_eta, fullfile(save_path, sprintf('Stable_n%d_k%d_eta.eps', n, k)), 'ContentType', 'vector');
+exportgraphics(fig_d, fullfile(save_path, sprintf('Stable_n%d_k%d_d.eps', n, k)), 'ContentType', 'vector');
 end
