@@ -11,5 +11,5 @@ volume = {34},
 month = {Jun},
 year = {2026},
 url = {https://opg.optica.org/oe/abstract.cfm?URI=oe-34-11-19780},
-doi = {10.1364/OE.590422},
+doi = {10.1364/OE.590422}
 }
